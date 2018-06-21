@@ -179,6 +179,7 @@ struct ncsi_channel {
 #define NCSI_CHANNEL_ACTIVE		2
 #define NCSI_CHANNEL_INVISIBLE		3
 	bool                        reconfigure_needed;
+	bool                        rx_only;
 	spinlock_t                  lock;	/* Protect filters etc */
 	struct ncsi_package         *package;
 	struct ncsi_channel_version version;
@@ -209,6 +210,7 @@ struct ncsi_package {
 	unsigned int         channel_num; /* Number of channels     */
 	struct list_head     channels;    /* List of chanels        */
 	struct list_head     node;        /* Form list of packages  */
+	bool                 multi_rx;    /* Enable Rx on all channels */
 };
 
 struct ncsi_request {

@@ -366,6 +366,54 @@ static int ncsi_clear_interface_nl(struct sk_buff *msg, struct genl_info *info)
 	return 0;
 }
 
+static int ncsi_enable_multirx_nl(struct sk_buff *msg, struct genl_info *info)
+{
+	struct ncsi_package *np, *package;
+	struct ncsi_dev_priv *ndp;
+	unsigned long flags, pflags;
+	u32 package_id;
+
+	if (!info || !info->attrs)
+		return -EINVAL;
+
+	if (!info->attrs[NCSI_ATTR_IFINDEX])
+		return -EINVAL;
+
+	if (!info->attrs[NCSI_ATTR_PACKAGE_ID])
+		return -EINVAL;
+
+	ndp = ndp_from_ifindex(get_net(sock_net(msg->sk)),
+			       nla_get_u32(info->attrs[NCSI_ATTR_IFINDEX]));
+	if (!ndp)
+		return -ENODEV;
+
+	package_id = nla_get_u32(info->attrs[NCSI_ATTR_PACKAGE_ID]);
+	package = NULL;
+
+	/* Clear any override */
+	spin_lock_irqsave(&ndp->lock, flags);
+	NCSI_FOR_EACH_PACKAGE(ndp, np)
+		if (np->id == package_id)
+			package = np;
+	if (!package) {
+		spin_unlock_irqrestore(&ndp->lock, flags);
+		return -ERANGE;
+	}
+	spin_lock_irqsave(&package->lock, pflags);
+	package->multi_rx = true;
+	spin_unlock_irqrestore(&package->lock, pflags);
+	spin_unlock_irqrestore(&ndp->lock, flags);
+
+	netdev_info(ndp->ndev.dev, "NCSI: Multi-rx enabled on package %u\n",
+		    package_id);
+
+	/* Bounce the NCSI channel to set changes */
+	ncsi_stop_dev(&ndp->ndev);
+	ncsi_start_dev(&ndp->ndev);
+
+	return 0;
+}
+
 static const struct genl_ops ncsi_ops[] = {
 	{
 		.cmd = NCSI_CMD_PKG_INFO,
@@ -384,6 +432,12 @@ static const struct genl_ops ncsi_ops[] = {
 		.cmd = NCSI_CMD_CLEAR_INTERFACE,
 		.policy = ncsi_genl_policy,
 		.doit = ncsi_clear_interface_nl,
+		.flags = GENL_ADMIN_PERM,
+	},
+	{
+		.cmd = NCSI_CMD_ENABLE_MULTIRX,
+		.policy = ncsi_genl_policy,
+		.doit = ncsi_enable_multirx_nl,
 		.flags = GENL_ADMIN_PERM,
 	},
 };

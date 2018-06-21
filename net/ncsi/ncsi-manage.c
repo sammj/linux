@@ -747,18 +747,22 @@ static void ncsi_configure_channel(struct ncsi_dev_priv *ndp)
 		} else if (nd->state == ncsi_dev_state_config_ebf) {
 			nca.type = NCSI_PKT_CMD_EBF;
 			nca.dwords[0] = nc->caps[NCSI_CAP_BC].cap;
-			nd->state = ncsi_dev_state_config_ecnt;
+			if (nc->rx_only)
+				nd->state = ncsi_dev_state_config_ec;
+			else
+				nd->state = ncsi_dev_state_config_ecnt;
 #if IS_ENABLED(CONFIG_IPV6)
 			if (ndp->inet6_addr_num > 0 &&
 			    (nc->caps[NCSI_CAP_GENERIC].cap &
 			     NCSI_CAP_GENERIC_MC))
 				nd->state = ncsi_dev_state_config_egmf;
-			else
-				nd->state = ncsi_dev_state_config_ecnt;
 		} else if (nd->state == ncsi_dev_state_config_egmf) {
 			nca.type = NCSI_PKT_CMD_EGMF;
 			nca.dwords[0] = nc->caps[NCSI_CAP_MC].cap;
-			nd->state = ncsi_dev_state_config_ecnt;
+			if (nc->rx_only)
+				nd->state = ncsi_dev_state_config_ec;
+			else
+				nd->state = ncsi_dev_state_config_ecnt;
 #endif /* CONFIG_IPV6 */
 		} else if (nd->state == ncsi_dev_state_config_ecnt) {
 			nca.type = NCSI_PKT_CMD_ECNT;
@@ -906,14 +910,30 @@ static int ncsi_choose_active_channel(struct ncsi_dev_priv *ndp)
 		return -ENODEV;
 	}
 
+out:
 	ncm = &found->modes[NCSI_MODE_LINK];
 	netdev_dbg(ndp->ndev.dev,
 		   "NCSI: Channel %u added to queue (link %s)\n",
 		   found->id, ncm->data[2] & 0x1 ? "up" : "down");
 
-out:
 	spin_lock_irqsave(&ndp->lock, flags);
 	list_add_tail_rcu(&found->link, &ndp->channel_queue);
+	if (found->package->multi_rx) {
+		/* In multi-rx mode configure each other channel on the package
+		 * with link to receive
+		 */
+		NCSI_FOR_EACH_CHANNEL(found->package, nc) {
+			ncm = &nc->modes[NCSI_MODE_LINK];
+			if (ncm->data[2] & 0x1 && nc != found) {
+				nc->rx_only = true;
+				list_add_tail_rcu(&nc->link,
+						  &ndp->channel_queue);
+				netdev_printk(KERN_DEBUG, ndp->ndev.dev,
+					      "NCSI: Channel %u added to queue (link %s, rx-only)\n",
+					      found->id, ncm->data[2] & 0x1 ? "up" : "down");
+			}
+		}
+	}
 	spin_unlock_irqrestore(&ndp->lock, flags);
 
 	return ncsi_process_next_channel(ndp);
